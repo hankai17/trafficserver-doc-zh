@@ -14,7 +14,7 @@
 
 RAM缓存由最前面的两个LRU/CLOCK对象哈希链表和一个seen哈希表组成。第一个缓存链表包含内存中的对象，但是第二个链表包含了近来放入缓存中或者打算放入缓存中的对象的历史信息(history of objects)，seen哈希表用来使算法耐扫描。
 
-下表中的元素记录了下面的信息：
+下表中的元素(对应源码中的`RamCacheCLFUSEntry`)记录了下面的信息：
 
 * key
 16字节的唯一对象标识符
@@ -46,10 +46,11 @@ true表示对象内容可以压缩，false表示不可压缩
 ATS冷启动后，Cached链表和History链表填满，将激活Seen链表。该链表的作用是缓存耐扫描，这意味着，经过对缓存中只见到一次的对象们做一长串的Get和Put操作，缓存状态一定不能受到影响。`这是最本质的`，如果没有这点保证，不仅缓存会受到污染，而且会丢失它所关注的对象相关的重要信息。所以，Cache链表和History链表不会受到第一次见到的对象上的Put操作和Get操作的影响是非常关键的。Seen Hash维护着一个16比特哈希标签(hash tags)的集合，未命中对象缓存(Cache链表和History链表中的)的请求，以及不匹配哈希标签的请求，导致哈希标签被更新，否则会被忽略。Seen Hash的大小近似缓存中的对象数，为了匹配用Cached链表和History链表的CLOCK率传给它的个数。
 
 #### Cached List
-Cached链表含有实际在内存中的对象，基本操作就是LRU，新对象插入FIFO队列中，命中导致对象被重新插入。当要考虑插入一个对象时，会有一个有趣的bit位，首先检查对象哈希去看对象是否在Cached链表或者History链表中。命中意味着更新`hit`域和重新插入对象。History命中导致`hit`域被更新，然后比较对象是否保存在内存中。比较基于Cached链表中的最近最少使用元素，并基于一个加权频率:
+Cached链表含有实际在内存中的对象，基本操作就是LRU，新对象插入FIFO队列中，命中导致对象被重新插入链表尾部。当要考虑插入一个对象时，会有一个有趣的bit位，首先检查对象哈希去看对象是否在Cached链表或者History链表中。命中意味着更新`hit`域并重新插入对象到链表尾部。History命中导致`hit`域被更新，然后比较对象是否保存在内存中。比较基于Cached链表中的最近最少使用元素，并基于一个加权频率:
 
 	CACHE_VALUE = hits / (size + overhead)
 
+该公式类似GDFS算法，用于计算对象的缓存值，这里hits是请求对象的命中率，size是该对象的大小，overhead是一个加权值，在代码中设置为256。该公式从直观上比较易于理解，那些访问次数多的小对象将会更易于进入RAM中，这比较符合事实。
 新对象必须有足够的字节值得当前缓存的对象去覆盖它。每次，当一个对象被认为可替换时，CLOCK就向前移动。假如History对象的值更大，就将它插入Cached链表，被替换的对象从内存中移除，并插入到History链表中。视作替换(至少一个)但还没有替换的对象，它们的hits域设为0，被重新插入Cached链表中，这就是Cached链表上的CLOCK操作。
 
 #### History List
@@ -63,3 +64,9 @@ Cached链表含有实际在内存中的对象，基本操作就是LRU，新对�
 ![RAM compression and decompression algorithm](http://img.blog.csdn.net/20160702091051380)
 
 这些都是粗略数字，你的测试结果可能相差很大。比如说，JPEG并不会用上述任何一种算法压缩(或者至少只会在个别级别做这种测试，压缩和解压成本完全没有说服力)，对其它许多嵌入某种压缩形式的媒体和二进制文件类型也是如此。RAM缓存探测不到具体的压缩级别，假如压缩后的文件大小不能达到原来大小的90%以下，RAM缓存就认为该文件是不可压缩的，并将这个值缓存下来，RAM缓存不会企图再去压缩它(至少在history中的这段时间内)。
+
+#### 参考文献
+https://docs.trafficserver.apache.org/en/latest/developer-guide/architecture/ram-cache.en.html
+http://blog.chinaunix.net/uid-23242010-id-147401.html
+http://blog.chinaunix.net/uid-23242010-id-147989.html
+
